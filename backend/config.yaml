@@ -1,0 +1,20 @@
+project_name: "VideoMind_MSA"
+version: "1.0.0"
+
+# 路径配置
+paths:
+  upload_dir: "data/raw/videos"
+  feature_dir: "data/features"
+  log_dir: "logs"
+
+# 预处理参数
+preprocessing:
+  fps: 3              # 每秒抽 3 帧
+  sr: 16000           # 音频采样率
+  max_seq_len: 50     # 统一对齐到 50 个时间步
+
+# LLM 配置
+agent:
+  api_key: "你的在线API_KEY"
+  base_url: "https://api.deepseek.com" # 或智谱、OpenAI 镜像
+  model: "deepseek-chat"
