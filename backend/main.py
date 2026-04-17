@@ -1,83 +1,123 @@
 import os
 import yaml
 import uuid
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 
-# 导入我们的核心模块
+# 导入自定义核心模块
 from core.extractor import FeatureExtractor
+from core.aligner import MultimodalAligner
 
-app = FastAPI(title="VideoMind MSA")
+app = FastAPI(title="VideoMind MSA API")
 
-# 解决跨域
+# 解决前后端分离架构中的跨域问题 (CORS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 开发环境下允许所有来源
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 1. 加载配置并初始化提取器 (单例模式)
-with open("config.yaml", "r", encoding="utf-8") as f:
+# 1. 加载全局配置
+CONFIG_PATH = "config.yaml"
+if not os.path.exists(CONFIG_PATH):
+    raise FileNotFoundError(f"未找到配置文件: {CONFIG_PATH}")
+
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
-# 这一步会加载 BERT，利用你的 RTX 30 显存
+# 2. 初始化核心组件 (单例模式，常驻内存)
+# FeatureExtractor 初始化时会自动检测并占用显卡 (CUDA) 资源
 extractor = FeatureExtractor(config)
+# Aligner 负责将异构的特征序列对齐至统一长度
+aligner = MultimodalAligner(target_len=config['preprocessing']['max_seq_len'])
 
-# 存储任务状态（生产环境中建议使用 Redis）
+# 3. 任务状态追踪字典 (内存存储，重启后重置)
 task_status = {}
 
 
 def run_extraction_pipeline(file_id: str, video_path: str, text: str = "This video is amazing"):
     """
-    后台运行的提取流水线
+    核心自动化流水线：
+    Step 1: 特征提取 (Extractor)
+    Step 2: 时序对齐 (Aligner)
+    Step 3: 结果持久化 (.npz)
     """
     try:
-        task_status[file_id] = "正在提取多模态特征..."
+        # A. 执行特征提取
+        task_status[file_id] = "正在提取视觉、音频与文本特征..."
+        v_raw, a_raw, t_raw = extractor.process_all(video_path, text)
 
-        # 执行三模态提取
-        v_feat, a_feat, t_feat = extractor.process_all(video_path, text)
+        # B. 执行时序对齐
+        task_status[file_id] = "正在执行三模态时序对齐..."
+        v_aligned, a_aligned, t_aligned = aligner.align(v_raw, a_raw, t_raw)
 
-        # 结果持久化 (保存为 .npy 供后续对齐和模型使用)
-        save_path = os.path.join(config['paths']['feature_dir'], f"{file_id}_features.npz")
-        np.savez(save_path, vision=v_feat, audio=a_feat, text=t_feat)
+        # C. 特征持久化保存
+        feature_dir = config['paths']['feature_dir']
+        os.makedirs(feature_dir, exist_ok=True)
 
-        task_status[file_id] = "特征提取完成，等待对齐与融合"
-        print(f"✅ 任务 {file_id} 特征已保存至: {save_path}")
+        save_path = os.path.join(feature_dir, f"{file_id}_aligned.npz")
+        np.savez(save_path,
+                 vision=v_aligned,
+                 audio=a_aligned,
+                 text=t_aligned)
+
+        task_status[file_id] = "处理完成，特征已就绪"
+        print(f"✅ 任务 {file_id} 完成。特征对齐结果已保存: {save_path}")
 
     except Exception as e:
-        task_status[file_id] = f"处理失败: {str(e)}"
+        error_info = f"流水线处理失败: {str(e)}"
+        task_status[file_id] = error_info
+        print(f"❌ 任务 {file_id} 报错: {error_info}")
+
+
+@app.get("/")
+async def health_check():
+    return {"status": "online", "service": "VideoMind MSA Backend"}
 
 
 @app.post("/upload")
 async def upload_video(background_tasks: BackgroundTasks, file: File = File(...)):
-    # 1. 生成唯一 ID 并保存视频
+    """
+    视频上传与异步处理入口
+    """
+    # 1. 生成任务 ID 并保存原始视频
     file_id = str(uuid.uuid4())[:8]
     ext = os.path.splitext(file.filename)[1]
-    video_path = os.path.join(config['paths']['upload_dir'], f"{file_id}{ext}")
 
-    os.makedirs(os.path.dirname(video_path), exist_ok=True)
+    upload_dir = config['paths']['upload_dir']
+    os.makedirs(upload_dir, exist_ok=True)
+
+    video_path = os.path.join(upload_dir, f"{file_id}{ext}")
+
     with open(video_path, "wb") as f:
         f.write(await file.read())
 
-    # 2. 注册后台任务，不阻塞前端
-    # 在 MOSI/MOSEI 数据集中，通常需要 ASR 文本，这里先预留接口 
+    # 2. 将计算密集型任务放入后台，立即返回响应
+    # 注意：在实际数据集测试中，text 建议来源于 ASR 结果或对应的 .txt 文件
     background_tasks.add_task(run_extraction_pipeline, file_id, video_path)
+
+    task_status[file_id] = "视频已上传，异步流水线启动..."
 
     return {
         "status": "started",
         "task_id": file_id,
-        "message": "视频上传成功，后端已启动异步特征提取"
+        "message": "视频已成功接收，正在进行多模态深度分析。"
     }
 
 
 @app.get("/status/{task_id}")
-async def get_status(task_id: str):
-    return {"task_id": task_id, "status": task_status.get(task_id, "未知任务")}
+async def get_task_status(task_id: str):
+    """
+    前端轮询接口，用于在 UI 上实时展示处理进度
+    """
+    status = task_status.get(task_id, "任务不存在")
+    return {"task_id": task_id, "status": status}
 
 
 if __name__ == "__main__":
     import uvicorn
-    import numpy as np  # 确保导入
 
+    # 启动服务，默认端口 8000
     uvicorn.run(app, host="127.0.0.1", port=8000)
