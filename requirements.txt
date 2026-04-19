@@ -1,0 +1,38 @@
+# --- 核心环境隔离 (解决 NumPy 2.x 冲突) ---
+# 必须锁定在 1.x 版本，否则 MediaPipe 和 OpenCV 会报 ImportError
+numpy==1.26.4
+eval_type_backport==0.2.0
+
+# --- 多模态算法核心 ---
+# 锁定 0.10.11 是为了确保 Windows 下的二进制组件加载稳定
+mediapipe==0.10.11
+# OpenCV 必须配合 NumPy 1.x，选择 4.9.0 物理兼容性最好
+opencv-python==4.9.0.80
+opencv-contrib-python==4.9.0.80
+
+# --- 深度学习推理 (RTX 30 显卡优化) ---
+# 建议通过官网命令安装包含 CUDA 的 torch，此处为基础依赖声明
+torch>=2.0.0
+torchvision
+torchaudio
+# 用于加载 BERT-base-uncased
+transformers>=4.30.0
+# BERT 推理所需的张量加速
+safetensors
+
+# --- 音频与视频处理 ---
+librosa==0.10.1
+# moviepy 负责音视频分离
+moviepy==1.0.3
+# librosa 的数学计算依赖
+scipy>=1.10.0
+
+# --- 后端 Web 框架 (FastAPI) ---
+fastapi[all]==0.109.0
+uvicorn==0.27.0
+# 核心：解析前端传来的视频文件流
+python-multipart>=0.0.6
+# 配置文件解析
+PyYAML==6.0.1
+# 用于 Agent 与大模型通信
+httpx>=0.25.0
