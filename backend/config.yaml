@@ -5,6 +5,7 @@ version: "1.0.0"
 paths:
   upload_dir: "data/raw/videos"
   feature_dir: "data/features"
+  checkpoint_dir: "checkpoints"
   log_dir: "logs"
 
 # 预处理参数
@@ -15,6 +16,6 @@ preprocessing:
 
 # LLM 配置
 agent:
-  api_key: "你的在线API_KEY"
-  base_url: "https://api.deepseek.com" # 或智谱、OpenAI 镜像
-  model: "deepseek-chat"
+  api_key: "sk-0c76a187c6a042b59986455ea05e0714"
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1" # 或智谱、OpenAI 镜像
+  model: "qwen3-max"
